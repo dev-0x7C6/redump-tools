@@ -16,5 +16,6 @@ find_package(CLI11 REQUIRED)
 find_package(pugixml REQUIRED)
 find_package(range-v3 REQUIRED)
 find_package(spdlog REQUIRED)
+find_package(PkgConfig REQUIRED)
 
 add_subdirectory("src")

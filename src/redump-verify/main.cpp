@@ -1,6 +1,8 @@
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -8,7 +10,9 @@
 #include <vector>
 
 #include <CLI/CLI.hpp>
+#include <cryptopp/sha.h>
 #include <fmt/core.h>
+#include <fmt/format.h>
 #include <pugixml.hpp>
 #include <range/v3/algorithm/sort.hpp>
 
@@ -105,13 +109,67 @@ auto load(const std::filesystem::path &path) -> std::optional<std::vector<redump
 
 } // namespace redump
 
+#include <fcntl.h>
+
+namespace raii {
+struct open {
+    template <typename... Ts>
+    open(Ts &&...args) noexcept
+            : descriptor(::open(std::forward<Ts>(args)...)) {}
+
+    ~open() noexcept {
+        if (descriptor != -1)
+            ::close(descriptor);
+    }
+
+    operator auto() const noexcept {
+        return descriptor;
+    }
+
+private:
+    const int descriptor{};
+};
+} // namespace raii
+
+auto sha1(const std::filesystem::path &path) -> std::string {
+    raii::open fd(path.c_str(), O_RDONLY);
+    if (!fd) return {};
+
+    CryptoPP::SHA1 processor;
+    std::array<CryptoPP::byte, 4096> buffer{};
+
+    ::posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+    ::lseek64(fd, 0, SEEK_SET);
+
+    for (;;) {
+        const auto size = ::read(fd, buffer.data(), buffer.size());
+        if (size == 0) break;
+        if (size <= 0) return {};
+
+        processor.Update(buffer.data(), size);
+    }
+
+    std::array<std::uint8_t, CryptoPP::SHA1::DIGESTSIZE> digest;
+    processor.Final(digest.data());
+
+    return fmt::format("{:02x}", fmt::join(digest, {}));
+}
+
 auto main(int argc, char **argv) -> int {
     CLI::App app("redump-verify");
 
     std::vector<std::string> paths;
+    std::vector<std::string> files;
 
-    auto opt = app.add_option("-i,--input", paths, "xml redump database");
-    opt->required()->allow_extra_args()->check(CLI::ExistingFile);
+    app.add_option("-i,--input", paths, "xml redump database") //
+        ->required()
+        ->allow_extra_args()
+        ->check(CLI::ExistingFile);
+
+    app.add_option("-v,--verify", files, "files to verify") //
+        ->required()
+        ->allow_extra_args()
+        ->check(CLI::ExistingFile);
 
     try {
         app.parse(argc, argv);
@@ -130,6 +188,23 @@ auto main(int argc, char **argv) -> int {
         return lhs.name < rhs.name;
     });
 
-    print(games);
-    return 0;
+    std::map<std::string, redump::game> sha1_to_game;
+
+    for (auto &&game : games)
+        for (auto &&rom : game.roms)
+            sha1_to_game[rom.sha1] = game;
+
+    auto is_valid{true};
+
+    for (auto file : files) {
+        const auto hash = sha1(file);
+        const auto valid = sha1_to_game.contains(hash);
+        if (valid)
+            fmt::print("{}: {} ({})\n", file, "ok", sha1_to_game[hash].name);
+        else
+            fmt::print("{}: {}\n", file, "nok");
+        is_valid &= valid;
+    }
+
+    return is_valid ? 0 : 2;
 }
