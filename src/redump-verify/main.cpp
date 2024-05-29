@@ -4,10 +4,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <unistd.h>
+#include <sys/types.h>
+#include <pwd.h>
 
 #include <CLI/CLI.hpp>
 #include <cryptopp/sha.h>
@@ -162,7 +167,6 @@ auto main(int argc, char **argv) -> int {
     std::vector<std::string> files;
 
     app.add_option("-i,--input", paths, "xml redump database") //
-        ->required()
         ->allow_extra_args()
         ->check(CLI::ExistingFile);
 
@@ -177,9 +181,20 @@ auto main(int argc, char **argv) -> int {
         return 1;
     }
 
+    const auto pw = getpwuid(getuid());
+    std::filesystem::path home_dir(pw->pw_dir);
+    std::filesystem::path db_dir(home_dir/".cache"/"redump"/"db");
+
+    std::filesystem::create_directories(db_dir);
+
+    for (auto &&entry : std::filesystem::directory_iterator{db_dir})
+        if (entry.is_regular_file())
+            paths.emplace_back(entry.path());
+
     std::vector<redump::game> games;
 
     for (auto &&path : paths) {
+        fmt::print("loading {}...\n", path);
         auto db = redump::load(path).value_or(std::vector<redump::game>{});
         std::move(db.begin(), db.end(), std::back_inserter(games));
     }
