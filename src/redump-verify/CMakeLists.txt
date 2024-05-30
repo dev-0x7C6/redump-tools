@@ -1,7 +1,10 @@
-#file(GLOB_RECURSE redump-verify-headers *.hpp)
-#file(GLOB_RECURSE redump-verify-sources *.cpp)
+file(GLOB_RECURSE redump-verify-headers *.hpp)
+file(GLOB_RECURSE redump-verify-sources *.cpp)
 
-add_executable(redump-verify main.cpp)
+add_executable(redump-verify
+    ${redump-verify-headers}
+    ${redump-verify-sources}
+)
 
 pkg_check_modules(cryptopp REQUIRED IMPORTED_TARGET libcryptopp)
 

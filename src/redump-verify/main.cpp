@@ -1,164 +1,18 @@
 
 #include <algorithm>
-#include <array>
-#include <cstdint>
-#include <cstdio>
-#include <filesystem>
-#include <format>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <vector>
-
-#include <unistd.h>
-#include <sys/types.h>
-#include <pwd.h>
-
-#include <CLI/CLI.hpp>
-#include <cryptopp/sha.h>
-#include <fmt/core.h>
-#include <fmt/format.h>
-#include <pugixml.hpp>
-#include <range/v3/algorithm/sort.hpp>
-
-using namespace std::literals;
-
-namespace xml {
-auto attr(const pugi::xml_node &node, const char *name) {
-    return node.attribute(name).value();
-}
-} // namespace xml
-
-namespace redump {
-struct content {
-    std::string filename;
-    std::uint64_t size{};
-    std::string crc;
-    std::string md5;
-    std::string sha1;
-};
-
-struct game {
-    std::string name;
-    std::string category;
-    std::string description;
-    std::vector<content> roms;
-};
-
-template <typename T = std::string>
-auto print(const redump::content &content, T prefix = {}) {
-    fmt::print("{}filename : {}\n", prefix, content.filename);
-    fmt::print("{}    size : {} bytes\n", prefix, content.size);
-    fmt::print("{}     crc : {}\n", prefix, content.crc);
-    fmt::print("{}     md5 : {}\n", prefix, content.md5);
-    fmt::print("{}    sha1 : {}\n", prefix, content.sha1);
-}
-
-template <typename T = std::string>
-auto print(const std::vector<redump::content> &content, T prefix = {}) {
-    for (auto &&c : content) {
-        print(c, prefix);
-        fmt::print("\n");
-    }
-}
-
-template <typename T = std::string>
-auto print(const redump::game &game, T prefix = {}) {
-    fmt::print("{}{}\n", prefix, game.name);
-    fmt::print("{}    category : {}\n", prefix, game.category);
-    fmt::print("{} description : {}\n\n", prefix, game.description);
-    print(game.roms, "    ");
-}
-
-template <typename T = std::string>
-auto print(const std::vector<redump::game> &games, T prefix = {}) {
-    for (auto &&game : games) {
-        print(game, prefix);
-        fmt::print("\n");
-    }
-}
-
-auto load(const std::filesystem::path &path) -> std::optional<std::vector<redump::game>> {
-    pugi::xml_document xml;
-    if (!xml.load_file(path.c_str())) return {};
-
-    std::vector<redump::game> ret;
-
-    for (auto &&node : xml.document_element()) {
-        if (node.name() != "game"sv) continue;
-
-        redump::game game{
-            .name = xml::attr(node, "name"),
-            .category = node.child_value("category"),
-            .description = node.child_value("description"),
-        };
-
-        for (auto &&s : node) {
-            if (s.name() != "rom"sv) continue;
-
-            game.roms.emplace_back( //
-                redump::content{
-                    .filename = xml::attr(s, "name"),
-                    .size = std::stoull(xml::attr(s, "size")),
-                    .crc = xml::attr(s, "crc"),
-                    .md5 = xml::attr(s, "md5"),
-                    .sha1 = xml::attr(s, "sha1"),
-                });
-        }
-
-        ret.emplace_back(std::move(game));
-    }
-
-    return ret;
-}
-
-} // namespace redump
 
 #include <fcntl.h>
+#include <pwd.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-namespace raii {
-struct open {
-    template <typename... Ts>
-    open(Ts &&...args) noexcept
-            : descriptor(::open(std::forward<Ts>(args)...)) {}
+#include <CLI/CLI.hpp>
+#include <fmt/core.h>
+#include <fmt/format.h>
+#include <range/v3/algorithm/sort.hpp>
 
-    ~open() noexcept {
-        if (descriptor != -1)
-            ::close(descriptor);
-    }
-
-    operator auto() const noexcept {
-        return descriptor;
-    }
-
-private:
-    const int descriptor{};
-};
-} // namespace raii
-
-auto sha1(const std::filesystem::path &path) -> std::string {
-    raii::open fd(path.c_str(), O_RDONLY);
-    if (!fd) return {};
-
-    CryptoPP::SHA1 processor;
-    std::array<CryptoPP::byte, 4096> buffer{};
-
-    ::posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
-    ::lseek64(fd, 0, SEEK_SET);
-
-    for (;;) {
-        const auto size = ::read(fd, buffer.data(), buffer.size());
-        if (size == 0) break;
-        if (size <= 0) return {};
-
-        processor.Update(buffer.data(), size);
-    }
-
-    std::array<std::uint8_t, CryptoPP::SHA1::DIGESTSIZE> digest;
-    processor.Final(digest.data());
-
-    return fmt::format("{:02x}", fmt::join(digest, {}));
-}
+#include "checksums.hpp"
+#include "common.hpp"
 
 auto main(int argc, char **argv) -> int {
     CLI::App app("redump-verify");
@@ -183,7 +37,7 @@ auto main(int argc, char **argv) -> int {
 
     const auto pw = getpwuid(getuid());
     std::filesystem::path home_dir(pw->pw_dir);
-    std::filesystem::path db_dir(home_dir/".cache"/"redump"/"db");
+    std::filesystem::path db_dir(home_dir / ".cache" / "redump" / "db");
 
     std::filesystem::create_directories(db_dir);
 
@@ -191,7 +45,7 @@ auto main(int argc, char **argv) -> int {
         if (entry.is_regular_file())
             paths.emplace_back(entry.path());
 
-    std::vector<redump::game> games;
+    redump::games games;
 
     for (auto &&path : paths) {
         fmt::print("loading {}...\n", path);
@@ -199,9 +53,9 @@ auto main(int argc, char **argv) -> int {
         std::move(db.begin(), db.end(), std::back_inserter(games));
     }
 
-    ranges::sort(games, [](const redump::game &lhs, const redump::game &rhs) -> bool {
-        return lhs.name < rhs.name;
-    });
+    // ranges::sort(games, [](const redump::game &lhs, const redump::game &rhs) -> bool {
+    //     return lhs.name < rhs.name;
+    // });
 
     std::map<std::string, redump::game> sha1_to_game;
 
@@ -212,7 +66,7 @@ auto main(int argc, char **argv) -> int {
     auto is_valid{true};
 
     for (auto file : files) {
-        const auto hash = sha1(file);
+        const auto hash = checksum::sha1(file);
         const auto valid = sha1_to_game.contains(hash);
         if (valid)
             fmt::print("{}: {} ({})\n", file, "ok", sha1_to_game[hash].name);
