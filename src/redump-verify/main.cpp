@@ -1,6 +1,7 @@
 
 #include <algorithm>
 
+#include <cryptopp/sha.h>
 #include <fcntl.h>
 #include <pwd.h>
 #include <sys/types.h>
@@ -65,8 +66,9 @@ auto main(int argc, char **argv) -> int {
 
     auto is_valid{true};
 
+    std::atomic<double> progress;
     for (auto file : files) {
-        const auto hash = checksum::sha1(file);
+        const auto hash = checksum::compute<CryptoPP::SHA1>(file, progress);
         const auto valid = sha1_to_game.contains(hash);
         if (valid)
             fmt::print("{}: {} ({})\n", file, "ok", sha1_to_game[hash].name);
