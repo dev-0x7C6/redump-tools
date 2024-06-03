@@ -14,6 +14,7 @@
 
 #include "checksums.hpp"
 #include "common.hpp"
+#include "fs.hpp"
 
 auto main(int argc, char **argv) -> int {
     CLI::App app("redump-verify");
@@ -36,10 +37,7 @@ auto main(int argc, char **argv) -> int {
         return 1;
     }
 
-    const auto pw = getpwuid(getuid());
-    std::filesystem::path home_dir(pw->pw_dir);
-    std::filesystem::path db_dir(home_dir / ".cache" / "redump" / "db");
-
+    std::filesystem::path db_dir(get_home_dir() / ".cache" / "redump" / "db");
     std::filesystem::create_directories(db_dir);
 
     for (auto &&entry : std::filesystem::directory_iterator{db_dir})
