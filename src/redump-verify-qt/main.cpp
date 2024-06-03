@@ -90,18 +90,13 @@ auto main(int argc, char **argv) -> int {
         if (entry.is_regular_file())
             paths.emplace_back(entry.path());
 
-    redump::games games;
-
-    for (auto &&path : paths) {
-        auto db = redump::load(path).value_or(std::vector<redump::game>{});
-        std::move(db.begin(), db.end(), std::back_inserter(games));
-    }
-
     std::map<std::string, redump::game> sha1_to_game;
-
-    for (auto &&game : games)
-        for (auto &&rom : game.roms)
-            sha1_to_game[rom.sha1] = game;
+    for (auto &&path : paths) {
+        auto games = redump::load(path).value_or(std::vector<redump::game>{});
+        for (auto &&game : games)
+            for (auto &&rom : game.roms)
+                sha1_to_game[rom.sha1] = game;
+    }
 
     auto is_valid{true};
     std::atomic<double> progress;
